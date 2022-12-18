@@ -1,3 +1,5 @@
+You control the onboard led with mqtt commands. This is useful when used with octoprint.
+
 # ESP32 MJPEG Multiclient Streaming Server
 
 This is a simple MJPEG streaming webserver implemented for AI-Thinker ESP32-CAM or ESP-EYE modules. 
