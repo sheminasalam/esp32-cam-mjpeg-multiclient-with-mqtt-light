@@ -28,6 +28,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WiFiClient.h>
+#include <PubSubClient.h>
 
 #include <esp_bt.h>
 #include <esp_wifi.h>
@@ -36,12 +37,26 @@
 
 // Select camera model
 //#define CAMERA_MODEL_WROVER_KIT
-#define CAMERA_MODEL_ESP_EYE
+//#define CAMERA_MODEL_ESP_EYE
 //#define CAMERA_MODEL_M5STACK_PSRAM
 //#define CAMERA_MODEL_M5STACK_WIDE
-//#define CAMERA_MODEL_AI_THINKER
+#define CAMERA_MODEL_AI_THINKER
 
 #include "camera_pins.h"
+
+const char* mqttServer = "mqtt_server";
+const int mqttPort = 1883;
+const char* mqttUser = "mqtt_username";
+const char* mqttPassword = "mqtt_pwd";
+const char* mqttTopic = "command/state topic";
+
+#define LED_PIN 4
+#define LED_PIN_ON HIGH
+#define LED_PIN_OFF LOW
+
+WiFiClient espClient;
+
+PubSubClient client(espClient);
 
 /*
   Next one is an include with wifi credentials.
@@ -379,6 +394,66 @@ void handleNotFound()
   server.send(200, "text / plain", message);
 }
 
+//------------------ MQTT ----------------------------------
+void mqtt_setup() {
+  client.setServer(mqttServer, mqttPort);
+    client.setCallback(callback);
+    Serial.println("Connecting to MQTT…");
+    while (!client.connected()) {        
+        String clientId = "ESP32Client-";
+        clientId += String(random(0xffff), HEX);
+        if (client.connect(clientId.c_str(), mqttUser, mqttPassword )) {
+            Serial.println("connected");
+        } else {
+            Serial.print("failed with state  ");
+            Serial.println(client.state());
+            delay(2000);
+        }
+    }
+
+    mqtt_send_lamp_status();
+    client.subscribe(mqttTopic);
+}
+
+void mqtt_send_lamp_status() {   
+  int val = digitalRead(LED_PIN);
+  Serial.printf("Sending LAMP status: ");
+  if(val == LED_PIN_OFF) {
+    Serial.println("OFF");
+    client.publish(mqttTopic, "OFF");
+  } else {
+    Serial.println("ON");
+    client.publish(mqttTopic, "ON");
+  }
+  client.subscribe(mqttTopic); 
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+
+    Serial.print("Message arrived in topic: ");
+    Serial.println(topic);
+
+    String byteRead = "";
+    Serial.print("Message: ");
+    for (int i = 0; i < length; i++) {
+        byteRead += (char)payload[i];
+    }    
+    Serial.println(byteRead);
+
+    if (byteRead == "OFF"){
+        Serial.println("LAMP OFF");
+        digitalWrite(LED_PIN, LED_PIN_OFF);
+    }
+
+    if (byteRead == "ON"){
+        Serial.println("LAMP ON");
+        digitalWrite(LED_PIN, LED_PIN_ON);
+    }
+
+    Serial.println();
+    Serial.println(" — — — — — — — — — — — -");
+
+}
 
 
 // ==== SETUP method ==================================================================
@@ -452,6 +527,7 @@ void setup()
   Serial.println("/mjpeg/1");
 
 
+
   // Start mainstreaming RTOS task
   xTaskCreatePinnedToCore(
     mjpegCB,
@@ -461,9 +537,12 @@ void setup()
     2,
     &tMjpeg,
     APP_CPU);
+   pinMode(LED_PIN, OUTPUT); // set led as output 
+   mqtt_setup();  
 }
 
 
 void loop() {
   vTaskDelay(1000);
+   client.loop(); 
 }
