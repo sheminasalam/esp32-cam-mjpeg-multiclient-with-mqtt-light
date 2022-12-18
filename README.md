@@ -1,4 +1,4 @@
-You control the onboard led with mqtt commands. This is useful when used with octoprint.
+You can control the onboard led with mqtt commands. This is useful when used with octoprint.
 
 # ESP32 MJPEG Multiclient Streaming Server
 
