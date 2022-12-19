@@ -1,4 +1,6 @@
-You can control the onboard led with mqtt commands. This is useful when used with octoprint.
+You can control the onboard led with mqtt commands. This is useful when used with octoprint and integration with Home Assistant. Just set the mqtt parameters in the code and then use payload ON or OFF for led operations.
+
+You can also do OTA update by publishing the payload UP to the mqtt topic set for led operations. In this case the ota update server will be active @ http://<ip_of_device/update . This server will be active for 30s for uploading the .bin file. Then it will restart and start the uploaded firmware.
 
 # ESP32 MJPEG Multiclient Streaming Server
 
