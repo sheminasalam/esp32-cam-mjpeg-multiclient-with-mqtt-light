@@ -25,38 +25,30 @@
 #define PRO_CPU 0
 
 #include "src/OV2640.h"
+
 #include <WiFi.h>
+
 #include <WebServer.h>
+
 #include <WiFiClient.h>
+
 #include <PubSubClient.h>
 
+#include <AsyncTCP.h>
+
+#include <ESPAsyncWebServer.h>
+
+#include <AsyncElegantOTA.h>
+
+#include <EEPROM.h>
+
 #include <esp_bt.h>
+
 #include <esp_wifi.h>
+
 #include <esp_sleep.h>
+
 #include <driver/rtc_io.h>
-
-// Select camera model
-//#define CAMERA_MODEL_WROVER_KIT
-//#define CAMERA_MODEL_ESP_EYE
-//#define CAMERA_MODEL_M5STACK_PSRAM
-//#define CAMERA_MODEL_M5STACK_WIDE
-#define CAMERA_MODEL_AI_THINKER
-
-#include "camera_pins.h"
-
-const char* mqttServer = "mqtt_server";
-const int mqttPort = 1883;
-const char* mqttUser = "mqtt_username";
-const char* mqttPassword = "mqtt_pwd";
-const char* mqttTopic = "command/state topic";
-
-#define LED_PIN 4
-#define LED_PIN_ON HIGH
-#define LED_PIN_OFF LOW
-
-WiFiClient espClient;
-
-PubSubClient client(espClient);
 
 /*
   Next one is an include with wifi credentials.
@@ -72,15 +64,49 @@ PubSubClient client(espClient);
 */
 #include "home_wifi_multi.h"
 
+
+//set value 1 to get serial output for debugging
+bool debug_mode = 0;
+
+// define the number of bytes you want to access
+#define EEPROM_SIZE 1
+
+//mqtt parameters
+const char * mqttServer = "server_address";
+const int mqttPort = 1883;
+const char * mqttUser = "mqtt_user_name";
+const char * mqttPassword = "mqtt_pwd";
+const char * mqttTopic = "mqtt_topic"; // both state and command topic are set same.
+
+
+// Select camera model
+//#define CAMERA_MODEL_WROVER_KIT
+//#define CAMERA_MODEL_ESP_EYE
+//#define CAMERA_MODEL_M5STACK_PSRAM
+//#define CAMERA_MODEL_M5STACK_WIDE
+#define CAMERA_MODEL_AI_THINKER
+
+#include "camera_pins.h"
+
+//led light parameters. No need to change for onboard led. change gpio for external led
+#define LED_PIN 4
+#define LED_PIN_ON HIGH
+#define LED_PIN_OFF LOW
+
+WiFiClient espClient;
+
+PubSubClient client(espClient);
+
+
 OV2640 cam;
 
 WebServer server(80);
 
 // ===== rtos task handles =========================
 // Streaming is implemented with 3 tasks:
-TaskHandle_t tMjpeg;   // handles client connections to the webserver
-TaskHandle_t tCam;     // handles getting picture frames from the camera and storing them locally
-TaskHandle_t tStream;  // actually streaming frames to all connected clients
+TaskHandle_t tMjpeg; // handles client connections to the webserver
+TaskHandle_t tCam; // handles getting picture frames from the camera and storing them locally
+TaskHandle_t tStream; // actually streaming frames to all connected clients
 
 // frameSync semaphore is used to prevent streaming buffer as it is replaced with the next frame
 SemaphoreHandle_t frameSync = NULL;
@@ -94,30 +120,30 @@ const int FPS = 14;
 // We will handle web client requests every 50 ms (20 Hz)
 const int WSINTERVAL = 100;
 
-
 // ======== Server Connection Handler Task ==========================
-void mjpegCB(void* pvParameters) {
+void mjpegCB(void * pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(WSINTERVAL);
 
   // Creating frame synchronization semaphore and initializing it
   frameSync = xSemaphoreCreateBinary();
-  xSemaphoreGive( frameSync );
+  xSemaphoreGive(frameSync);
 
   // Creating a queue to track all connected clients
-  streamingClients = xQueueCreate( 10, sizeof(WiFiClient*) );
+  streamingClients = xQueueCreate(10, sizeof(WiFiClient * ));
 
   //=== setup section  ==================
 
   //  Creating RTOS task for grabbing frames from the camera
   xTaskCreatePinnedToCore(
-    camCB,        // callback
-    "cam",        // name
-    4096,         // stacj size
-    NULL,         // parameters
-    2,            // priority
-    &tCam,        // RTOS task handle
-    APP_CPU);     // core
+    camCB, // callback
+    "cam", // name
+    4096, // stacj size
+    NULL, // parameters
+    2, // priority
+    &
+    tCam, // RTOS task handle
+    APP_CPU); // core
 
   //  Creating task to push the stream to all connected clients
   xTaskCreatePinnedToCore(
@@ -125,8 +151,8 @@ void mjpegCB(void* pvParameters) {
     "strmCB",
     4 * 1024,
     NULL, //(void*) handler,
-    2,
-    &tStream,
+    2, &
+    tStream,
     APP_CPU);
 
   //  Registering webserver handling routines
@@ -144,18 +170,16 @@ void mjpegCB(void* pvParameters) {
 
     //  After every server client handling request, we let other tasks run and then pause
     taskYIELD();
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    vTaskDelayUntil( & xLastWakeTime, xFrequency);
   }
 }
 
-
 // Commonly used variables:
-volatile size_t camSize;    // size of the current frame, byte
-volatile char* camBuf;      // pointer to the current frame
-
+volatile size_t camSize; // size of the current frame, byte
+volatile char * camBuf; // pointer to the current frame
 
 // ==== RTOS task to grab frames from the camera =========================
-void camCB(void* pvParameters) {
+void camCB(void * pvParameters) {
 
   TickType_t xLastWakeTime;
 
@@ -166,8 +190,14 @@ void camCB(void* pvParameters) {
   portMUX_TYPE xSemaphore = portMUX_INITIALIZER_UNLOCKED;
 
   //  Pointers to the 2 frames, their respective sizes and index of the current frame
-  char* fbs[2] = { NULL, NULL };
-  size_t fSize[2] = { 0, 0 };
+  char * fbs[2] = {
+    NULL,
+    NULL
+  };
+  size_t fSize[2] = {
+    0,
+    0
+  };
   int ifb = 0;
 
   //=== loop() section  ===================
@@ -186,31 +216,31 @@ void camCB(void* pvParameters) {
     }
 
     //  Copy current frame into local buffer
-    char* b = (char*) cam.getfb();
+    char * b = (char * ) cam.getfb();
     memcpy(fbs[ifb], b, s);
 
     //  Let other tasks run and wait until the end of the current frame rate interval (if any time left)
     taskYIELD();
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    vTaskDelayUntil( & xLastWakeTime, xFrequency);
 
     //  Only switch frames around if no frame is currently being streamed to a client
     //  Wait on a semaphore until client operation completes
-    xSemaphoreTake( frameSync, portMAX_DELAY );
+    xSemaphoreTake(frameSync, portMAX_DELAY);
 
     //  Do not allow interrupts while switching the current frame
-    portENTER_CRITICAL(&xSemaphore);
+    portENTER_CRITICAL( & xSemaphore);
     camBuf = fbs[ifb];
     camSize = s;
     ifb++;
-    ifb &= 1;  // this should produce 1, 0, 1, 0, 1 ... sequence
-    portEXIT_CRITICAL(&xSemaphore);
+    ifb &= 1; // this should produce 1, 0, 1, 0, 1 ... sequence
+    portEXIT_CRITICAL( & xSemaphore);
 
     //  Let anyone waiting for a frame know that the frame is ready
-    xSemaphoreGive( frameSync );
+    xSemaphoreGive(frameSync);
 
     //  Technically only needed once: let the streaming task know that we have at least one frame
     //  and it could start sending frames to the clients, if any
-    xTaskNotifyGive( tStream );
+    xTaskNotifyGive(tStream);
 
     //  Immediately let other (streaming) tasks run
     taskYIELD();
@@ -218,36 +248,33 @@ void camCB(void* pvParameters) {
     //  If streaming task has suspended itself (no active clients to stream to)
     //  there is no need to grab frames from the camera. We can save some juice
     //  by suspedning the tasks
-    if ( eTaskGetState( tStream ) == eSuspended ) {
-      vTaskSuspend(NULL);  // passing NULL means "suspend yourself"
+    if (eTaskGetState(tStream) == eSuspended) {
+      vTaskSuspend(NULL); // passing NULL means "suspend yourself"
     }
   }
 }
 
-
 // ==== Memory allocator that takes advantage of PSRAM if present =======================
-char* allocateMemory(char* aPtr, size_t aSize) {
+char * allocateMemory(char * aPtr, size_t aSize) {
 
   //  Since current buffer is too smal, free it
   if (aPtr != NULL) free(aPtr);
 
-
   size_t freeHeap = ESP.getFreeHeap();
-  char* ptr = NULL;
+  char * ptr = NULL;
 
   // If memory requested is more than 2/3 of the currently free heap, try PSRAM immediately
-  if ( aSize > freeHeap * 2 / 3 ) {
-    if ( psramFound() && ESP.getFreePsram() > aSize ) {
-      ptr = (char*) ps_malloc(aSize);
+  if (aSize > freeHeap * 2 / 3) {
+    if (psramFound() && ESP.getFreePsram() > aSize) {
+      ptr = (char * ) ps_malloc(aSize);
     }
-  }
-  else {
+  } else {
     //  Enough free heap - let's try allocating fast RAM as a buffer
-    ptr = (char*) malloc(aSize);
+    ptr = (char * ) malloc(aSize);
 
     //  If allocation on the heap failed, let's give PSRAM one more chance:
-    if ( ptr == NULL && psramFound() && ESP.getFreePsram() > aSize) {
-      ptr = (char*) ps_malloc(aSize);
+    if (ptr == NULL && psramFound() && ESP.getFreePsram() > aSize) {
+      ptr = (char * ) ps_malloc(aSize);
     }
   }
 
@@ -258,41 +285,36 @@ char* allocateMemory(char* aPtr, size_t aSize) {
   return ptr;
 }
 
-
 // ==== STREAMING ======================================================
-const char HEADER[] = "HTTP/1.1 200 OK\r\n" \
-                      "Access-Control-Allow-Origin: *\r\n" \
-                      "Content-Type: multipart/x-mixed-replace; boundary=123456789000000000000987654321\r\n";
+const char HEADER[] = "HTTP/1.1 200 OK\r\n"\
+"Access-Control-Allow-Origin: *\r\n"\
+"Content-Type: multipart/x-mixed-replace; boundary=123456789000000000000987654321\r\n";
 const char BOUNDARY[] = "\r\n--123456789000000000000987654321\r\n";
 const char CTNTTYPE[] = "Content-Type: image/jpeg\r\nContent-Length: ";
 const int hdrLen = strlen(HEADER);
 const int bdrLen = strlen(BOUNDARY);
 const int cntLen = strlen(CTNTTYPE);
 
-
 // ==== Handle connection request from clients ===============================
-void handleJPGSstream(void)
-{
+void handleJPGSstream(void) {
   //  Can only acommodate 10 clients. The limit is a default for WiFi connections
-  if ( !uxQueueSpacesAvailable(streamingClients) ) return;
-
+  if (!uxQueueSpacesAvailable(streamingClients)) return;
 
   //  Create a new WiFi Client object to keep track of this one
-  WiFiClient* client = new WiFiClient();
-  *client = server.client();
+  WiFiClient * client = new WiFiClient();
+  * client = server.client();
 
   //  Immediately send this client a header
-  client->write(HEADER, hdrLen);
-  client->write(BOUNDARY, bdrLen);
+  client -> write(HEADER, hdrLen);
+  client -> write(BOUNDARY, bdrLen);
 
   // Push the client to the streaming queue
-  xQueueSend(streamingClients, (void *) &client, 0);
+  xQueueSend(streamingClients, (void * ) & client, 0);
 
   // Wake up streaming tasks, if they were previously suspended:
-  if ( eTaskGetState( tCam ) == eSuspended ) vTaskResume( tCam );
-  if ( eTaskGetState( tStream ) == eSuspended ) vTaskResume( tStream );
+  if (eTaskGetState(tCam) == eSuspended) vTaskResume(tCam);
+  if (eTaskGetState(tStream) == eSuspended) vTaskResume(tStream);
 }
-
 
 // ==== Actually stream content to all connected clients ========================
 void streamCB(void * pvParameters) {
@@ -302,8 +324,8 @@ void streamCB(void * pvParameters) {
 
   //  Wait until the first frame is captured and there is something to send
   //  to clients
-  ulTaskNotifyTake( pdTRUE,          /* Clear the notification value before exiting. */
-                    portMAX_DELAY ); /* Block indefinitely. */
+  ulTaskNotifyTake(pdTRUE, /* Clear the notification value before exiting. */
+    portMAX_DELAY); /* Block indefinitely. */
 
   xLastWakeTime = xTaskGetTickCount();
   for (;;) {
@@ -312,77 +334,70 @@ void streamCB(void * pvParameters) {
 
     //  Only bother to send anything if there is someone watching
     UBaseType_t activeClients = uxQueueMessagesWaiting(streamingClients);
-    if ( activeClients ) {
+    if (activeClients) {
       // Adjust the period to the number of connected clients
       xFrequency /= activeClients;
 
       //  Since we are sending the same frame to everyone,
       //  pop a client from the the front of the queue
-      WiFiClient *client;
-      xQueueReceive (streamingClients, (void*) &client, 0);
+      WiFiClient * client;
+      xQueueReceive(streamingClients, (void * ) & client, 0);
 
       //  Check if this client is still connected.
 
-      if (!client->connected()) {
+      if (!client -> connected()) {
         //  delete this client reference if s/he has disconnected
         //  and don't put it back on the queue anymore. Bye!
         delete client;
-      }
-      else {
+      } else {
 
         //  Ok. This is an actively connected client.
         //  Let's grab a semaphore to prevent frame changes while we
         //  are serving this frame
-        xSemaphoreTake( frameSync, portMAX_DELAY );
+        xSemaphoreTake(frameSync, portMAX_DELAY);
 
-        client->write(CTNTTYPE, cntLen);
+        client -> write(CTNTTYPE, cntLen);
         sprintf(buf, "%d\r\n\r\n", camSize);
-        client->write(buf, strlen(buf));
-        client->write((char*) camBuf, (size_t)camSize);
-        client->write(BOUNDARY, bdrLen);
+        client -> write(buf, strlen(buf));
+        client -> write((char * ) camBuf, (size_t) camSize);
+        client -> write(BOUNDARY, bdrLen);
 
         // Since this client is still connected, push it to the end
         // of the queue for further processing
-        xQueueSend(streamingClients, (void *) &client, 0);
+        xQueueSend(streamingClients, (void * ) & client, 0);
 
         //  The frame has been served. Release the semaphore and let other tasks run.
         //  If there is a frame switch ready, it will happen now in between frames
-        xSemaphoreGive( frameSync );
+        xSemaphoreGive(frameSync);
         taskYIELD();
       }
-    }
-    else {
+    } else {
       //  Since there are no connected clients, there is no reason to waste battery running
       vTaskSuspend(NULL);
     }
     //  Let other tasks run after serving every client
     taskYIELD();
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    vTaskDelayUntil( & xLastWakeTime, xFrequency);
   }
 }
 
-
-
-const char JHEADER[] = "HTTP/1.1 200 OK\r\n" \
-                       "Content-disposition: inline; filename=capture.jpg\r\n" \
-                       "Content-type: image/jpeg\r\n\r\n";
+const char JHEADER[] = "HTTP/1.1 200 OK\r\n"\
+"Content-disposition: inline; filename=capture.jpg\r\n"\
+"Content-type: image/jpeg\r\n\r\n";
 const int jhdLen = strlen(JHEADER);
 
 // ==== Serve up one JPEG frame =============================================
-void handleJPG(void)
-{
+void handleJPG(void) {
   WiFiClient client = server.client();
 
   if (!client.connected()) return;
   cam.run();
   client.write(JHEADER, jhdLen);
-  client.write((char*)cam.getfb(), cam.getSize());
+  client.write((char * ) cam.getfb(), cam.getSize());
 }
 
-
 // ==== Handle invalid URL requests ============================================
-void handleNotFound()
-{
+void handleNotFound() {
   String message = "Server is running!\n\n";
   message += "URI: ";
   message += server.uri();
@@ -397,152 +412,192 @@ void handleNotFound()
 //------------------ MQTT ----------------------------------
 void mqtt_setup() {
   client.setServer(mqttServer, mqttPort);
-    client.setCallback(callback);
-    Serial.println("Connecting to MQTT…");
-    while (!client.connected()) {        
-        String clientId = "ESP32Client-";
-        clientId += String(random(0xffff), HEX);
-        if (client.connect(clientId.c_str(), mqttUser, mqttPassword )) {
-            Serial.println("connected");
-        } else {
-            Serial.print("failed with state  ");
-            Serial.println(client.state());
-            delay(2000);
-        }
+  client.setCallback(callback);
+  Serial.println("Connecting to MQTT…");
+  while (!client.connected()) {
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX);
+    if (client.connect(clientId.c_str(), mqttUser, mqttPassword)) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed with state  ");
+      Serial.println(client.state());
+      delay(2000);
     }
+  }
 
-    mqtt_send_lamp_status();
-    client.subscribe(mqttTopic);
+  mqtt_send_lamp_status();
+  client.subscribe(mqttTopic);
 }
 
-void mqtt_send_lamp_status() {   
+void mqtt_send_lamp_status() {
   int val = digitalRead(LED_PIN);
   Serial.printf("Sending LAMP status: ");
-  if(val == LED_PIN_OFF) {
+  if (val == LED_PIN_OFF) {
     Serial.println("OFF");
     client.publish(mqttTopic, "OFF");
   } else {
     Serial.println("ON");
     client.publish(mqttTopic, "ON");
   }
-  client.subscribe(mqttTopic); 
+  client.subscribe(mqttTopic);
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
+void callback(char * topic, byte * payload, unsigned int length) {
 
-    Serial.print("Message arrived in topic: ");
-    Serial.println(topic);
+  Serial.print("Message arrived in topic: ");
+  Serial.println(topic);
 
-    String byteRead = "";
-    Serial.print("Message: ");
-    for (int i = 0; i < length; i++) {
-        byteRead += (char)payload[i];
-    }    
-    Serial.println(byteRead);
+  String byteRead = "";
+  Serial.print("Message: ");
+  for (int i = 0; i < length; i++) {
+    byteRead += (char) payload[i];
+  }
+  Serial.println(byteRead);
 
-    if (byteRead == "OFF"){
-        Serial.println("LAMP OFF");
-        digitalWrite(LED_PIN, LED_PIN_OFF);
-    }
+  if (byteRead == "OFF") {
+    Serial.println("LAMP OFF");
+    digitalWrite(LED_PIN, LED_PIN_OFF);
+  }
 
-    if (byteRead == "ON"){
-        Serial.println("LAMP ON");
-        digitalWrite(LED_PIN, LED_PIN_ON);
-    }
+  if (byteRead == "ON") {
+    Serial.println("LAMP ON");
+    digitalWrite(LED_PIN, LED_PIN_ON);
+  }
 
-    Serial.println();
-    Serial.println(" — — — — — — — — — — — -");
-
-}
-
-
-// ==== SETUP method ==================================================================
-void setup()
-{
-
-  // Setup Serial connection:
-  Serial.begin(115200);
-  delay(1000); // wait for a second to let Serial connect
-
-
-  // Configure the camera
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
-
-  // Frame parameters: pick one
-  //  config.frame_size = FRAMESIZE_UXGA;
-  //  config.frame_size = FRAMESIZE_SVGA;
-  //  config.frame_size = FRAMESIZE_QVGA;
-  config.frame_size = FRAMESIZE_VGA;
-  config.jpeg_quality = 12;
-  config.fb_count = 2;
-
-#if defined(CAMERA_MODEL_ESP_EYE)
-  pinMode(13, INPUT_PULLUP);
-  pinMode(14, INPUT_PULLUP);
-#endif
-
-  if (cam.init(config) != ESP_OK) {
-    Serial.println("Error initializing the camera");
-    delay(10000);
+  if (byteRead == "UP") {
+    int x = 0;
+    EEPROM.begin(EEPROM_SIZE);
+    EEPROM.write(0, x);
+    EEPROM.commit();
+    Serial.println("OTA update intialiizng");
+    delay(3000);
+    int ota_test = EEPROM.read(0);
+    Serial.println(ota_test);
+    delay(2000);
     ESP.restart();
   }
 
+  Serial.println();
+  Serial.println(" — — — — — — — — — — — -");
 
-  //  Configure and connect to WiFi
-  IPAddress ip;
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(SSID1, PWD1);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(F("."));
-  }
-  ip = WiFi.localIP();
-  Serial.println(F("WiFi connected"));
-  Serial.println("");
-  Serial.print("Stream Link: http://");
-  Serial.print(ip);
-  Serial.println("/mjpeg/1");
-
-
-
-  // Start mainstreaming RTOS task
-  xTaskCreatePinnedToCore(
-    mjpegCB,
-    "mjpeg",
-    4 * 1024,
-    NULL,
-    2,
-    &tMjpeg,
-    APP_CPU);
-   pinMode(LED_PIN, OUTPUT); // set led as output 
-   mqtt_setup();  
 }
 
+// ==== SETUP method ==================================================================
+void setup() {
+  EEPROM.begin(EEPROM_SIZE);
+  if (debug_mode == 1) {
+    // Setup Serial connection:
+    Serial.begin(115200);
+    delay(1000); // wait for a second to let Serial connect
+  }
+  int ota_mode = EEPROM.read(0);
+  delay(1000);
+  Serial.println(ota_mode);
+  if (ota_mode == 0) {
+    //  Configure and connect to WiFi
+    IPAddress ip;
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(SSID1, PWD1);
+    Serial.print("Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(F("."));
+    }
+    ip = WiFi.localIP();
+    Serial.println(F("WiFi connected"));
+
+    AsyncWebServer server2(80);
+    server2.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
+      request -> send(200, "text/plain", "Hi! I am ESP32.");
+    });
+
+    AsyncElegantOTA.begin( & server2); // Start ElegantOTA
+    server2.begin();
+    Serial.println("HTTP server started");
+    int y = 1;
+    EEPROM.write(0, y);
+    EEPROM.commit();
+    delay(30000);
+    ESP.restart();
+
+  } else {
+
+    // Configure the camera
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = PWDN_GPIO_NUM;
+    config.pin_reset = RESET_GPIO_NUM;
+    config.xclk_freq_hz = 20000000;
+    config.pixel_format = PIXFORMAT_JPEG;
+
+    // Frame parameters: pick one
+    //  config.frame_size = FRAMESIZE_UXGA;
+    //  config.frame_size = FRAMESIZE_SVGA;
+    //  config.frame_size = FRAMESIZE_QVGA;
+    config.frame_size = FRAMESIZE_VGA;
+    config.jpeg_quality = 12;
+    config.fb_count = 2;
+
+    #if defined(CAMERA_MODEL_ESP_EYE)
+    pinMode(13, INPUT_PULLUP);
+    pinMode(14, INPUT_PULLUP);
+    #endif
+
+    if (cam.init(config) != ESP_OK) {
+      Serial.println("Error initializing the camera");
+      delay(10000);
+      ESP.restart();
+    }
+
+    //  Configure and connect to WiFi
+    IPAddress ip;
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(SSID1, PWD1);
+    Serial.print("Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(F("."));
+    }
+    ip = WiFi.localIP();
+    Serial.println(F("WiFi connected"));
+    Serial.println("");
+    Serial.print("Stream Link: http://");
+    Serial.print(ip);
+    Serial.println("/mjpeg/1");
+
+    // Start mainstreaming RTOS task
+    xTaskCreatePinnedToCore(
+      mjpegCB,
+      "mjpeg",
+      4 * 1024,
+      NULL,
+      2, &
+      tMjpeg,
+      APP_CPU);
+    pinMode(LED_PIN, OUTPUT); // set led as output 
+    mqtt_setup();
+  }
+}
 
 void loop() {
-  vTaskDelay(1000);
-   client.loop(); 
+  //  vTaskDelay(1000);
+  client.loop();
 }
