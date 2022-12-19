@@ -477,6 +477,14 @@ void callback(char * topic, byte * payload, unsigned int length) {
     delay(2000);
     ESP.restart();
   }
+  
+  }
+
+   if (byteRead == "RS") {
+    Serial.println("System Restarting");
+    delay(1000);
+    ESP.restart();
+  }   
 
   Serial.println();
   Serial.println(" — — — — — — — — — — — -");
